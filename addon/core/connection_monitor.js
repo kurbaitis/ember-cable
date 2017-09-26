@@ -51,7 +51,7 @@ var ConnectionMonitor = Ember.Object.extend({
   },
 
   reconnectIfStale() {
-    if(this.connectionIsStale()) {
+    if(this.connectionIsStale() && Ember.isEqual(this.get('connection.connected'), true)) {
       this.incrementProperty('reconnectAttempts');
       if(!this.disconnectedRecently()) {
         this.get('connection').reopen();
