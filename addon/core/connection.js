@@ -54,12 +54,19 @@ export default Ember.Object.extend({
     this.close();
   },
 
+  callConsumerEvent(event) {
+    if (Ember.isPresent(this.get(`consumer.events.${event}`))) {
+      this.get(`consumer.events.${event}`)(this);
+    }
+  },
+
   events: {
     message(event) {
       let data = JSON.parse(event.data);
       switch (data.type) {
         case 'welcome':
           this.get('monitor').connected();
+          this.callConsumerEvent('onWelcome');
           break;
         case 'ping':
           this.get('monitor').ping();
@@ -82,12 +89,13 @@ export default Ember.Object.extend({
     },
 
     close() {
-      this.disconnect();
+      this.callConsumerEvent('onClose');
     },
 
     error() {
-      this.disconnect();
-    }
+      this.callConsumerEvent('onError');
+    },
+
   }
 
 });

@@ -4,6 +4,7 @@ import Connection from 'ember-cable/core/connection';
 
 export default Ember.Object.extend({
   url: null,
+  events: null,
 
   init() {
     this._super(...arguments);
