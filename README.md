@@ -2,6 +2,9 @@
 
 This add-on enables simple integration of Rails Action Cable into Ember apps.
 
+[![Build Status](https://travis-ci.org/algonauti/ember-cable.svg?branch=master)](https://travis-ci.org/algonauti/ember-cable)
+[![Ember Observer Score](https://emberobserver.com/badges/ember-cable.svg)](https://emberobserver.com/addons/ember-cable)
+
 ### Installation
 run the following command from inside your ember-cli project:
 
@@ -18,6 +21,7 @@ import Ember from 'ember';
 
 export default Ember.Controller.extend({
   cableService: Ember.inject.service('cable'),
+  consumer: null,
 
   setupConsumer: Ember.on('init', function() {
     var consumer = this.get('cableService').createConsumer('ws://localhost:4200/cable');
@@ -55,11 +59,20 @@ export default Ember.Controller.extend({
 
     // Send actions to your Action Cable channel class
     subscription.perform("your_channel_action", { hey: "hello" });
+
+    // Save consumer to controller to link up computed props
+    this.set('consumer', consumer);
   }),
 
   updateRecord(data) {
     Ember.debug( "updateRecord(data) -> " + Ember.inspect(data) );
-  }
+  },
+
+  // Flag indicating a connection is being attempted
+  isConnecting: Ember.computed.readOnly('consumer.isConnecting'),
+
+  // Milliseconds until the next connection attempt
+  nextConnectionAt: Ember.computed.readOnly('consumer.nextConnectionAt'),
 });
 
 ```

@@ -1,42 +1,73 @@
-import Ember from 'ember';
+import { run } from '@ember/runloop';
+import { capitalize } from '@ember/string';
+import { getOwner } from '@ember/application';
+import { readOnly } from '@ember/object/computed';
+import { tryInvoke, isEqual } from '@ember/utils';
+import EmberObject, { set, get } from '@ember/object';
 import ConnectionMonitor from 'ember-cable/core/connection_monitor';
 
-export default Ember.Object.extend({
+export default EmberObject.extend({
   consumer: null,
   connected: false,
+  isConnecting: false,
+  _reopenTimer: null,
 
   init() {
     this._super(...arguments);
     this.open();
-    this.set('monitor', ConnectionMonitor.create(Ember.getOwner(this).ownerInjection(), { connection: this }));
+    this.monitor = ConnectionMonitor.create(getOwner(this).ownerInjection(), {
+      connection: this
+    });
   },
 
+  nextConnectionAt: readOnly('monitor.nextConnectionAt'),
+
   send(data) {
-    if(this.isOpen()) {
-      this.get('webSocket').send(JSON.stringify(data));
+    if (this.isOpen()) {
+      get(this, 'webSocket').send(JSON.stringify(data));
     }
   },
 
   open() {
-    this.set('webSocket', new WebSocket(this.get('consumer.url')));
-    for (var eventName in this.events) {
-      this.get('webSocket')[`on${eventName}`] = this.events[eventName].bind(this);
-    }
+    let ws = new WebSocket(get(this, 'consumer.url'));
+
+    ['open', 'close', 'error', 'message'].forEach(eventName => {
+      ws[`on${eventName}`] = event => {
+        run(() => tryInvoke(this, `on${capitalize(eventName)}`, [event]));
+      };
+    });
+
+    run(() => {
+      set(this, 'isConnecting', true);
+      set(this, 'webSocket', ws);
+    });
   },
 
   close() {
-    Ember.tryInvoke(this.get('webSocket'), 'close');
+    let ws = this.get('webSocket');
+
+    ['open', 'close', 'error', 'message'].forEach(eventName => {
+      ws[`on${eventName}`] = null;
+    });
+
+    tryInvoke(get(this, 'webSocket'), 'close');
+    this.disconnect();
   },
 
   reopen() {
-    if(this.isClose()){
+    if (this.isClose()) {
       this.open();
     } else {
       this.close();
-      Ember.run.later(this, () => {
-        this.open();
-      }, 500);
+      this._reopenTimer = setTimeout(run.bind(this, 'reopen'), 500);
     }
+  },
+
+  willDestroy() {
+    this._super();
+    clearTimeout(this._reopenTimer);
+    this.monitor.destroy();
+    this.close();
   },
 
   isClose() {
@@ -44,13 +75,15 @@ export default Ember.Object.extend({
   },
 
   isOpen() {
-    return Ember.isEqual(this.get('connected'), true) &&
-      Ember.isEqual(this.get('webSocket').readyState, this.get('webSocket').OPEN)
+    return (
+      isEqual(get(this, 'connected'), true) &&
+      isEqual(get(this, 'webSocket').readyState, get(this, 'webSocket').OPEN)
+    );
   },
 
   disconnect() {
-    this.set('connected', false);
-    this.get('consumer.subscriptions').notifyAll('disconnected');
+    set(this, 'connected', false);
+    get(this, 'consumer.subscriptions').notifyAll('disconnected');
     this.close();
   },
 
@@ -60,42 +93,55 @@ export default Ember.Object.extend({
     }
   },
 
-  events: {
-    message(event) {
-      let data = JSON.parse(event.data);
-      switch (data.type) {
-        case 'welcome':
-          this.get('monitor').connected();
-          this.callConsumerEvent('onWelcome');
-          break;
-        case 'ping':
-          this.get('monitor').ping();
-          break;
-        case 'confirm_subscription':
-          this.get('consumer.subscriptions').notify(data.identifier, 'connected');
-          break;
-        case 'reject_subscription':
-          this.get('consumer.subscriptions').reject(data.identifier);
-          break;
-        default:
-          this.get('consumer.subscriptions').notify(data.identifier, 'received', data.message);
-      }
+  onMessage(event) {
+    let data = JSON.parse(event.data);
+    switch (data.type) {
+      case 'welcome':
+        get(this, 'monitor').connected();
+        this.callConsumerEvent('onWelcome');
+        break;
+      case 'ping':
+        get(this, 'monitor').ping();
+        break;
+      case 'confirm_subscription':
+        get(this, 'consumer.subscriptions').notify(
+          data.identifier,
+          'connected'
+        );
+        break;
+      case 'reject_subscription':
+        get(this, 'consumer.subscriptions').reject(data.identifier);
+        break;
+      default:
+        get(this, 'consumer.subscriptions').notify(
+          data.identifier,
+          'received',
+          data.message
+        );
+    }
+  },
 
-    },
+  onOpen() {
+    run(() => {
+      set(this, 'isConnecting', false);
+      set(this, 'connected', true);
+      get(this, 'consumer.subscriptions').reload();
+    });
+  },
 
-    open() {
-      this.set('connected', true);
-      this.get('consumer.subscriptions').reload();
-    },
+  onClose() {
+    this.callConsumerEvent('onClose');
+    run(() => {
+      set(this, 'isConnecting', false);
+    });
+    this.disconnect();
+  },
 
-    close() {
-      this.callConsumerEvent('onClose');
-    },
-
-    error() {
-      this.callConsumerEvent('onError');
-    },
-
+  onError() {
+    this.callConsumerEvent('onError');
+    run(() => {
+      set(this, 'isConnecting', false);
+    });
+    this.disconnect();
   }
-
 });
